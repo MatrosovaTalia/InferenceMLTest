@@ -20,9 +20,9 @@ ap.add_argument("-p", "--prototxt",
 ap.add_argument("-m", "--model",
 	default="MobileNetSSD_deploy.caffemodel",
 	help="path to Caffe pre-trained model")
-ap.add_argument("-i", "--input", type=str, required=True,
+ap.add_argument("-i", "--input", type=str, default="test.mp4",
 	help="path to optional input video file")
-ap.add_argument("-o", "--output", type=str, default="result.avi",
+ap.add_argument("-o", "--output", type=str, default="output/result.avi",
 	help="path to optional output video file")
 ap.add_argument("-c", "--confidence", type=float, default=0.4,
 	help="minimum probability to filter weak detections")
@@ -46,8 +46,6 @@ vs = cv2.VideoCapture(args["input"])
 
 writer = None
 
-# initialize the frame dimensions (we'll set them as soon as we read
-# the first frame from the video)
 W = None
 H = None
 
@@ -68,7 +66,6 @@ fps = FPS().start()
 
 # loop over frames from the video stream
 while True:
-	# grab the next frame and handle it
 	frame = vs.read()
 	frame = frame[1] if args.get("input", False) else frame
 
@@ -76,8 +73,6 @@ while True:
 	if args["input"] is not None and frame is None:
 		break
 
-	# resize the frame to have a maximum width of 500 pixels
-	# to increase the speed of computation
 	frame = imutils.resize(frame, width=500)
 	rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
@@ -89,37 +84,26 @@ while True:
 		fourcc = cv2.VideoWriter_fourcc(*"MJPG")
 		writer = cv2.VideoWriter(args["output"], fourcc, 30,
 			(W, H), True)
-
-	# initialize the current status along with our list of bounding
-	# box rectangles returned by either (1) our object detector or
-	# (2) the correlation trackers
 	status = "Waiting"
 	rects = []
 
 	# check what algorithm to run
 	# if frame number is a multiple of skip frames run detection
 	if totalFrames % args["skip_frames"] == 0:
-		# set the status and initialize our new set of object trackers
+		if totalFrames % (args["skip_frames"] * 10) == 0:
+			print("Detecting", str(totalFrames))
 		status = "Detecting"
 		trackers = []
 
-		# convert the frame to a blob and pass the blob through the
-		# network and obtain the detections
 		blob = cv2.dnn.blobFromImage(frame, 0.007843, (W, H), 127.5)
 		net.setInput(blob)
 		detections = net.forward()
-
 		# loop over the detections
 		for i in np.arange(0, detections.shape[2]):
-			# extract the confidence (i.e., probability) associated
-			# with the prediction
 			confidence = detections[0, 0, i, 2]
 
-			# filter out weak detections by requiring a minimum
-			# confidence
+			# filter out weak detections by requiring a minimum confidence
 			if confidence > args["confidence"]:
-				# extract the index of the class label from the
-				# detections list
 				idx = int(detections[0, 0, i, 1])
 
 				# if the class label is not a person, ignore it
@@ -127,17 +111,11 @@ while True:
 					continue
 				
 				# compute the (x, y)-coordinates of the bounding box
-				# for the object
 				box = detections[0, 0, i, 3:7] * np.array([W, H, W, H])
 				(startX, startY, endX, endY) = box.astype("int")
-				# construct a dlib rectangle object from the bounding
-				# box coordinates and then start the dlib correlation
-				# tracker
 				tracker = dlib.correlation_tracker()
 				rect = dlib.rectangle(startX, startY, endX, endY)
 				tracker.start_track(rgb, rect)
-				# add the tracker to our list of trackers so we can
-				# utilize it during skip frames
 				trackers.append(tracker)
 		
 	else:
@@ -162,10 +140,8 @@ while True:
 	objects = ct.update(rects)
 	# loop over the tracked objects
 	for (objectID, centroid) in objects.items():
-		# check to see if a trackable object exists for the current
-		# object ID
+		# check to see if a trackable object exists for the current objectID
 		to = trackableObjects.get(objectID, None)
-		# if there is no existing trackable object, create one
 		if to is None:
 			to = TrackableObject(objectID, centroid)
 
@@ -176,38 +152,22 @@ while True:
 
 		# store the trackable object in our dictionary
 		trackableObjects[objectID] = to
-
 		# draw both the ID of the object to the frame
 		text = "ID {}".format(objectID)
 		cv2.putText(frame, text, (centroid[0] - 10, centroid[1] - 10),
 					cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 		cv2.circle(frame, (centroid[0], centroid[1]), 4, (0, 255, 0), -1)
-	
-	# display which algorithm (tracking or detection is currently in use)
-	# info = [
-	# 	("Status", status),
-	# # ]
-	# # loop over the info tuples and draw them on our frame
-	# for (i, (k, v)) in enumerate(info):
-	# 	text = "{}: {}".format(k, v)
-	# 	cv2.putText(frame, text, (10, H - ((i * 20) + 20)),
-	# 	cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
 	if writer is not None:
 		writer.write(frame)
-		# show the output frame
-		cv2.imshow("Frame", frame)
 		key = cv2.waitKey(1) & 0xFF
-		# if the `q` key was pressed, break from the loop
 		if key == ord("q"):
 			break
 
 	totalFrames += 1
 	fps.update()
-# stop the timer and display FPS information
 fps.stop()
 print("[INFO] approx. FPS: {:.2f}".format(fps.fps()))
-# check to see if we need to release the video writer pointer
 if writer is not None:
 	writer.release()
 
